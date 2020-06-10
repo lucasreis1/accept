@@ -38,6 +38,9 @@ macro(add_clang_plugin name)
     )
 endmacro(add_clang_plugin)
 
+#generate compiledb file
+set(CMAKE_EXPORT_COMPILE_COMMANDS on)
+
 # Finally, the subprojects we actually intend to build.
 add_subdirectory(pass)
 add_subdirectory(checkerlib)
