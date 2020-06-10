@@ -107,8 +107,6 @@ clean:
 	rm compile_commands.json
 	rm pass/compile_commands.json
 
-
-
 # Fetching and extracting LLVM.
 
 .INTERMEDIATE: llvm-$(LLVM_VERSION).src.tar.gz
