@@ -12,6 +12,7 @@ VENV := venv
 CXXLIBPATH := $(wildcard /usr/include/*-linux-gnu/c++/4.*)
 ARCH_CXXLIB:= $(shell basename /usr/include/*-linux-gnu/)
 TOOLCHAIN_VERSION := $(shell basename $(CXXLIBPATH))
+TOOLCHAIN_FOLDER := gcc_toolchain
 
 # CMake options for building LLVM and the ACCEPT pass.
 CMAKE_FLAGS := -G Ninja -DCMAKE_INSTALL_PREFIX:PATH=$(shell pwd)/$(BUILT) 
@@ -75,8 +76,8 @@ llvm: llvm/CMakeLists.txt llvm/tools/clang check_cmake check_ninja
 	# To prevent clang from using gcc newer toolchain (and fail compiling),
 	# create our own toolchain
 	if [ "$(CXXLIBPATH)" != "" ]; then \
-		mkdir gcc_toolchain; \
-		cd gcc_toolchain; \
+		mkdir $(TOOLCHAIN_FOLDER); \
+		cd $(TOOLCHAIN_FOLDER); \
 		ln -s /usr/include include; \
 		ln -s /usr/bin bin; \
 		mkdir -p lib/gcc/$(ARCH_CXXLIB); \
@@ -100,6 +101,7 @@ test:
 
 clean:
 	rm -rf $(BUILD)
+	rm -rf $(TOOLCHAIN_FOLDER)
 
 
 # Fetching and extracting LLVM.
