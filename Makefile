@@ -96,7 +96,6 @@ llvm: llvm/CMakeLists.txt llvm/tools/clang check_cmake check_ninja
 
 setup: llvm accept driver
 	ln -s $(BUILD)/enerc/compile_commands.json
-	cd pass; ln -s ../$(BUILD)/enerc/compile_commands.json
 
 test:
 	$(PYTHON2) $(BUILT)/bin/llvm-lit -v --filter='test_\w+\.' test
@@ -105,7 +104,6 @@ clean:
 	rm -rf $(BUILD)
 	rm -rf $(TOOLCHAIN_FOLDER)
 	rm compile_commands.json
-	rm pass/compile_commands.json
 
 # Fetching and extracting LLVM.
 
