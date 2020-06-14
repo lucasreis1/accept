@@ -162,7 +162,7 @@ void ACCEPTPass::dumpRelaxConfig() {
 }
 
 void ACCEPTPass::loadRelaxConfig() {
-  std::ifstream configFile("accept_config.txt");;
+  std::ifstream configFile("accept_config.txt");
   if (!configFile.good()) {
     errs() << "no config file; no optimizations will occur\n";
     return;

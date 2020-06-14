@@ -31,6 +31,8 @@ namespace llvm {
   LoopPass *createLoopPerfPass();
   void initializeLoopNPUPass(PassRegistry &Registry);
   LoopPass *createLoopNPUPass();
+  FunctionPass *createFunctionApproxPass();
+  void initializeFunctionApproxPass(PassRegistry &Registry);
   FunctionPass *createErrorInjectionPass();
   void initializeErrorInjectionPass(PassRegistry &Registry);
   void initializeApproxInfoPass(PassRegistry &Registry);

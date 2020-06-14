@@ -9,6 +9,7 @@ VIRTUALENV := virtualenv
 # Location of the Python virtual environment.
 VENV := venv
 
+FAPPROXDIR := $(shell pwd)/fastapprox/fastapprox/src
 CXXLIBPATH := $(wildcard /usr/include/*-linux-gnu/c++/4.*)
 ARCH_CXXLIB:= $(shell basename /usr/include/*-linux-gnu/)
 TOOLCHAIN_VERSION := $(shell basename $(CXXLIBPATH))
@@ -92,9 +93,14 @@ llvm: llvm/CMakeLists.txt llvm/tools/clang check_cmake check_ninja
 
 # Convenience targets.
 
-.PHONY: setup test clean
+.PHONY: setup fastapprox test clean
 
-setup: llvm accept driver
+setup: llvm fastapprox accept driver
+
+fastapprox: 
+	cd $(FAPPROXDIR);\
+	cp fastonebigheader.h fastapprox.c; \
+	sed -i 's/static inline/__attribute__((always_inline))/g' fastapprox.c
 
 test:
 	$(PYTHON2) $(BUILT)/bin/llvm-lit -v --filter='test_\w+\.' test
