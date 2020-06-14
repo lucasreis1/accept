@@ -44,9 +44,11 @@ namespace {
     PM.add(createAcceptTransformPass());
     if (acceptEnableInjection)
       PM.add(createErrorInjectionPass());
+    PM.add(createFunctionApproxPass());
     PM.add(createLoopPerfPass());
     if (acceptEnableNPU)
       PM.add(createLoopNPUPass());
+
   }
   static RegisterStandardPasses
       RegisterACCEPT(PassManagerBuilder::EP_EarlyAsPossible,

@@ -33,6 +33,7 @@ PARAM_MAX = {
     'barrier': 1,
     'alias': 1,
     'npu_region': 1,
+    'call': 2,
 }
 EPSILON_ERROR = 0.001
 EPSILON_SPEEDUP = 0.01

@@ -151,7 +151,6 @@ bool ErrorInjection::doFinalization(Module &M) {
 
 bool ErrorInjection::runOnFunction(Function &F) {
   AI = &getAnalysis<ApproxInfo>();
-
   // Skip optimizing functions that seem to be in standard libraries.
   if (transformPass->shouldSkipFunc(F))
     return false;

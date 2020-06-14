@@ -21,11 +21,14 @@ LLVMOPT := $(BUILTDIR)/bin/opt
 LLVMLLC := $(BUILTDIR)/bin/llc
 LLVMLLI := $(BUILTDIR)/bin/lli
 RTDIR := $(ACCEPTDIR)/rt
+FAPPROXDIR := $(ACCEPTDIR)/fastapprox/fastapprox/src
 
 # Target platform specifics.
 ARCH ?= default
 RTLIB ?= $(RTDIR)/acceptrt.$(ARCH).bc
+FAPPROXLIB ?= $(FAPPROXDIR)/fastapprox.$(ARCH).bc
 EXTRABC += $(RTLIB)
+EXTRABC += $(FAPPROXLIB)
 
 # Host platform specifics.
 ifeq ($(shell uname -s),Darwin)
@@ -54,6 +57,7 @@ PASSLIB ?= $(BUILTDIR)/lib/enerc.$(LIBEXT)
 override CFLAGS += -I$(INCLUDEDIR) -g -fno-use-cxa-atexit
 override CXXFLAGS += $(CFLAGS)
 LLCARGS += -O2
+LIBS += -lm
 
 # Compiler flags to pass to Clang to add the ACCEPT machinery.
 ENERCFLAGS :=  -Xclang -load -Xclang $(ENERCLIB) \
@@ -118,6 +122,10 @@ $(BUILD_TARGETS): build_%: setup $(EXTRADEPS) $(TARGET).%
 # Make the ACCEPT runtime library for the target architecture.
 $(RTLIB):
 	make -C $(RTDIR) acceptrt.$(ARCH).bc CC="$(CC)" CFLAGS="$(CFLAGS)"
+
+# Make the FastApprox runtime library for the target architecture.
+$(FAPPROXLIB):
+	$(CC) $(CFLAGS) -O0 -c -emit-llvm -o $@ $(FAPPROXDIR)/fastapprox.c
 
 # Link component bitcode files into a single file.
 $(LINKEDBC): $(BCFILES) $(EXTRABC)
