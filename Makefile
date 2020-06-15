@@ -96,6 +96,7 @@ llvm: llvm/CMakeLists.txt llvm/tools/clang check_cmake check_ninja
 .PHONY: setup fastapprox test clean
 
 setup: llvm fastapprox accept driver
+	ln -s $(BUILD)/enerc/compile_commands.json
 
 fastapprox: 
 	cd $(FAPPROXDIR);\
