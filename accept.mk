@@ -28,7 +28,7 @@ ARCH ?= default
 RTLIB ?= $(RTDIR)/acceptrt.$(ARCH).bc
 FAPPROXLIB ?= $(FAPPROXDIR)/fastapprox.$(ARCH).bc
 EXTRABC += $(RTLIB)
-EXTRABC += $(FAPPROXLIB)
+APPROXBC += $(FAPPROXLIB)
 
 # Host platform specifics.
 ifeq ($(shell uname -s),Darwin)
@@ -71,6 +71,7 @@ TARGET ?= app
 BCFILES := $(SOURCES:.c=.bc)
 BCFILES := $(BCFILES:.cpp=.bc)
 LINKEDBC := $(TARGET)_all.bc
+LINKEDAPPROX := $(TARGET)_opt.bc
 LLFILES := $(BCFILES:.bc=.ll)
 
 # Attempt to guess which linker to use.
@@ -131,6 +132,9 @@ $(FAPPROXLIB):
 $(LINKEDBC): $(BCFILES) $(EXTRABC)
 	$(LLVMLINK) $^ > $@
 
+$(LINKEDAPPROX): $(LINKEDBC) $(APPROXBC)
+	$(LLVMLINK) $^ > $@
+
 # For debugging: we can also disassemble to .ll files.
 #	for f in $(BCFILES); do \
 #		$(LLVMDIS) $$f; \
@@ -139,7 +143,7 @@ $(LINKEDBC): $(BCFILES) $(EXTRABC)
 # Versions of the amalgamated program.
 $(TARGET).orig.bc: $(LINKEDBC)
 	$(LLVMOPT) -load $(PASSLIB) -O1 $(OPTARGS) $< -o $@
-$(TARGET).opt.bc: $(LINKEDBC) accept_config.txt
+$(TARGET).opt.bc: $(LINKEDAPPROX) accept_config.txt
 	$(LLVMOPT) -load $(PASSLIB) -O1 -accept-relax $(OPTARGS) $< -o $@
 $(TARGET).dummy.bc: $(LINKEDBC)
 	cp $< $@
@@ -153,7 +157,7 @@ $(TARGET).%: $(TARGET).%.s
 	$(LINKER) $(LDFLAGS) -o $@ $< $(LIBS)
 
 clean:
-	$(RM) $(TARGET) $(TARGET).s $(BCFILES) $(LLFILES) $(LINKEDBC) \
+	$(RM) $(TARGET) $(TARGET).s $(BCFILES) $(LLFILES) $(LINKEDBC) $(LINKEDAPPROX) \
 	accept-globals-info.txt accept_config.txt accept_config_desc.txt \
 	accept_log.txt accept_time.txt \
 	$(CONFIGS:%=$(TARGET).%.bc) $(CONFIGS:%=$(TARGET).%) \

@@ -235,10 +235,7 @@ ApproxInfo::ApproxInfo() : FunctionPass(ID) {
   std::string error;
   logEnabled = acceptLogEnabled;
   if (logEnabled) {
-    // TODO: For now we are appending to the logfile until I can fix the
-    // creation of more than one ApproxInfo Pass
-    logFile = new raw_fd_ostream("accept_log.txt", error,
-                                 llvm::raw_fd_ostream::F_Append);
+    logFile = new raw_fd_ostream("accept_log.txt", error);
   }
 }
 
