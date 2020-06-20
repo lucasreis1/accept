@@ -91,7 +91,7 @@ namespace {
     bool tryToOptimizeCall(CallInst *Call);
     void copyCallMetadata(CallInst *C1, CallInst *C2);
     std::vector<Value *> createArgumentsArray(CallInst *Call,
-                                           IRBuilder<> &builder);
+                                              IRBuilder<> &builder);
     bool populateReplacementRequirements(
         CallInst *&Call, FunctionType *&fcType, FunctionType *&otherFCType,
         ArrayRef<Value *> &argsArray, ArrayRef<Value *> &otherArgsArray,
@@ -117,7 +117,7 @@ const char *FunctionApprox::getPassName() const {
 }
 
 bool FunctionApprox::runOnFunction(Function &F) {
-  if(!AI)
+  if (!AI)
     AI = transformPass->AI;
   if (transformPass->shouldSkipFunc(F))
     return false;
@@ -159,7 +159,7 @@ bool FunctionApprox::tryToOptimizeCall(CallInst *Call) {
   std::string funcName = func->getName().str();
 
   ACCEPT_LOG << "within function " << funcName << "\n";
-  
+
   // Look for ACCEPT_FORBID marker.
   if (AI->instMarker(Call) == markerForbid)
     return false;
@@ -373,7 +373,6 @@ void FunctionApprox::replaceFunction(CallInst *Call, unsigned int option) {
   Module *parent = currentFunction->getParent();
   LLVMContext &ctx = parent->getContext();
   functionName = formatString(currentFunction->getName());
-  bool requiresTwoCalls;
 
   // Default string for new prototype
   opString = approxVersion(option);
@@ -388,7 +387,7 @@ void FunctionApprox::replaceFunction(CallInst *Call, unsigned int option) {
 
   // Populates the required variables to ensure the creation of
   // new calls
-  requiresTwoCalls = populateReplacementRequirements(
+  bool requiresTwoCalls = populateReplacementRequirements(
       Call, fcType, otherFcType, argsArray, otherArgsArray, opString,
       otherOpString, comparison, builder);
 
@@ -409,7 +408,6 @@ void FunctionApprox::replaceFunction(CallInst *Call, unsigned int option) {
     BranchInst *condJump = BranchInst::Create(ifBB, elseBB, comparison);
     Instruction *toReplace = Call->getParent()->getTerminator();
     ReplaceInstWithInst(toReplace, condJump);
-
     // Create both functions
     newFunction = cast<Function>(parent->getOrInsertFunction(opString, fcType));
     otherNewFunction =
@@ -442,6 +440,7 @@ void FunctionApprox::replaceFunction(CallInst *Call, unsigned int option) {
     pointToInsert = ++BasicBlock::iterator(otherNewCall);
     builder.SetInsertPoint(pointToInsert);
     builder.CreateStore(otherNewCall, resultPtr);
+
     // Load pointer into variable result
     builder.SetInsertPoint(afterIfElse->getFirstInsertionPt());
     Value *result = builder.CreateLoad(resultPtr, "result");
