@@ -57,7 +57,6 @@ PASSLIB ?= $(BUILTDIR)/lib/enerc.$(LIBEXT)
 override CFLAGS += -I$(INCLUDEDIR) -g -fno-use-cxa-atexit
 override CXXFLAGS += $(CFLAGS)
 LLCARGS += -O2
-LIBS += -lm
 
 # Compiler flags to pass to Clang to add the ACCEPT machinery.
 ENERCFLAGS :=  -Xclang -load -Xclang $(ENERCLIB) \

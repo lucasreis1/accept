@@ -26,6 +26,7 @@ char const* polymorphicWhitelist_array[] = {
   "cos",
   "log",
   "exp",
+  "exp2",
   "pow",
   "sqrt",
   "sqrtf",
@@ -39,10 +40,15 @@ char const* polymorphicWhitelist_array[] = {
   "sinh",
   "tanh",
   "log10",
+  "log2", 
   "ceil",
   "fabs",
   "floor",
   "fmod",
+  "erfc", 
+  "erf", 
+  "lgamma", 
+  "digamma", 
 };
 const std::set<std::string> polymorphicWhitelist(
   polymorphicWhitelist_array,
