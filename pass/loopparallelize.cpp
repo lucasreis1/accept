@@ -17,16 +17,6 @@ template <typename T, size_t N> T *end(T (&arr)[N]) { return arr + N; }
 
 LoopParallelize::LoopParallelize() : LoopPass(ID) {}
 
-void printLoop(Loop *L) {
-  errs() << "printing loop\n";
-  errs() << "@@@@@@@@@@@@@@@@@@@\n";
-  for (Loop::block_iterator bit = L->block_begin(); bit != L->block_end();
-       ++bit) {
-    errs() << **bit << '\n';
-  }
-  errs() << "@@@@@@@@@@@@@@@@@@@\n";
-}
-
 bool LoopParallelize::isOnLoop(Instruction *inst, Loop *L) {
   for (Loop::block_iterator it = L->block_begin(); it != L->block_end(); ++it) {
     if (inst->getParent() == *it)
