@@ -45,6 +45,7 @@ namespace {
     if (acceptEnableInjection)
       PM.add(createErrorInjectionPass());
     PM.add(createFunctionApproxPass());
+    PM.add(createLoopParallelizePass());
     PM.add(createLoopPerfPass());
     if (acceptEnableNPU)
       PM.add(createLoopNPUPass());

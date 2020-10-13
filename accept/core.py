@@ -34,6 +34,7 @@ PARAM_MAX = {
     'alias': 1,
     'npu_region': 1,
     'call': 2,
+    'ploop': 3,
 }
 EPSILON_ERROR = 0.001
 EPSILON_SPEEDUP = 0.01
@@ -200,6 +201,8 @@ def execute(timeout, approx=False, test=False):
     status, output = run_cmd(command, timeout)
     end_time = time.time()
 
+    if(output):
+        output = output.decode('utf8')
     logging.log(FIREHOSE,
                 u'execution output (status {0}): {1}'.format(status, output))
     return end_time - start_time, status, output

@@ -29,7 +29,10 @@ RTLIB ?= $(RTDIR)/acceptrt.$(ARCH).bc
 FAPPROXLIB ?= $(FAPPROXDIR)/fastapprox.$(ARCH).bc
 EXTRABC += $(RTLIB)
 APPROXBC += $(FAPPROXLIB)
+APPROXBC += $(ACCEPTDIR)/omp.bc
 
+# Required for parallelization
+LIBS += -liomp5
 # Host platform specifics.
 ifeq ($(shell uname -s),Darwin)
 	XCODEINCLUDES = $(shell xcrun --show-sdk-path)/usr/include

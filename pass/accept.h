@@ -8,6 +8,8 @@
 #include "llvm/DebugInfo.h"
 #include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Analysis/LoopPass.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
+#include "llvm/IRBuilder.h"
 
 #include <set>
 #include <map>
@@ -28,6 +30,7 @@ namespace llvm {
   void initializeAcceptAAPass(PassRegistry &Registry);
   FunctionPass *createAcceptTransformPass();
   extern FunctionPass *sharedAcceptTransformPass;
+  LoopPass *createLoopParallelizePass();
   LoopPass *createLoopPerfPass();
   void initializeLoopNPUPass(PassRegistry &Registry);
   LoopPass *createLoopNPUPass();
@@ -197,6 +200,72 @@ struct ACCEPTPass : public llvm::FunctionPass {
   llvm::Instruction *findApproxCritSec(llvm::Instruction *acq,
       LogDescription *desc);
   bool nullifyApprox(llvm::Function &F);
+};
+
+// This class searches loops and stores info on viable ones to apply automatic
+// paralellization
+class LoopParallelize : public llvm::LoopPass {
+public:
+  static char ID;
+  ACCEPTPass *transformPass;
+  ApproxInfo *AI;
+  llvm::Module *module;
+  LoopParallelize();
+
+  // Stores loop info for parallelization
+  struct viableLoop {
+    llvm::Loop *L;
+    llvm::Value *lower, *upper, *increment;
+    bool willInvert, isForLike;
+    llvm::SmallVector<llvm::Instruction *, 3> &incrementInstructions;
+    std::vector<llvm::BasicBlock *> bodyBlocks;
+    std::set<llvm::Value *> bodyPointers;
+
+    viableLoop(llvm::Loop *l, llvm::Value *low, llvm::Value *up,
+               llvm::Value *incr, bool wi, bool ifl,
+               llvm::SmallVector<llvm::Instruction *, 3> &ii,
+               std::vector<llvm::BasicBlock *> &bbs,
+               const std::set<llvm::Value *> &bps)
+        : L(l), lower(low), upper(up), increment(incr), willInvert(wi),
+          isForLike(ifl), incrementInstructions(ii), bodyBlocks(bbs),
+          bodyPointers(bps) {}
+  };
+
+  void recurseRemovefromLPM(llvm::Loop *L, llvm::LPPassManager &LPM);
+  void deleteLoop(llvm::Loop *L, llvm::LPPassManager &LPM);
+
+  bool isOnLoop(llvm::Instruction *inst, llvm::Loop *L);
+  bool isOnLoop(llvm::BasicBlock *bb, llvm::Loop *L);
+  bool isOnLoopBody(llvm::Instruction *inst,
+                    std::vector<llvm::BasicBlock *> bodyBlocks);
+  bool getLowerAndUpperBounds(llvm::Loop *L, llvm::Value *&lower,
+                              llvm::Value *&upper, bool &willInvert);
+  llvm::Value *getPointerValue(llvm::Value *possibleLoad);
+  bool getIncrement(
+      llvm::Loop *L, bool isForLike,
+      llvm::SmallVector<llvm::Instruction *, 3> &incrementInstructions);
+
+  void searchBodyPointers(llvm::BasicBlock *bodyBlock,
+                          std::set<llvm::Value *> &bodyPointers,
+                          std::vector<llvm::BasicBlock *> bodyBlocks,
+                          llvm::Loop *L);
+
+  llvm::Function *createFunction(llvm::Function *ompFunc,
+                                 const std::set<llvm::Value *> &allocaToArgs,
+                                 llvm::ValueToValueMapTy &valueM);
+  llvm::Value *ensureLoad(llvm::Value *pointer, llvm::IRBuilder<> &builder);
+
+  llvm::Value *replaceCounter(llvm::Value *plower, llvm::Value *upperv,
+                              llvm::Value *incr, bool isUnsigned,
+                              bool willInvert, llvm::IRBuilder<> &builder);
+
+  bool paralellizeLoop(viableLoop VL, llvm::LPPassManager &LPM, int logthreads);
+
+  virtual bool doInitialization(llvm::Loop *, llvm::LPPassManager &);
+  virtual bool doFinalization();
+  virtual bool runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM);
+  virtual void getAnalysisUsage(llvm::AnalysisUsage &AU) const;
+  const char *getPassName() const;
 };
 
 // Information about individual instructions is always available.
