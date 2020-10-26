@@ -127,7 +127,10 @@ bool FunctionApprox::runOnFunction(Function &F) {
   for (Function::iterator BB = F.begin(); BB != F.end(); ++BB) {
     for (BasicBlock::iterator I = BB->begin(); I != BB->end(); ++I) {
       if (CallInst *CI = dyn_cast<CallInst>(I)) {
-        StringRef functionName = CI->getCalledFunction()->getName();
+        Function *calledF = CI->getCalledFunction();
+        if(!calledF)
+          continue;
+        StringRef functionName = calledF->getName();
         if (functionReplacementList.count(functionName)) {
           toReplace.push_back(CI);
         }

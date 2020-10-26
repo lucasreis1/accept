@@ -17,7 +17,7 @@ template <typename T, size_t N> T *end(T (&arr)[N]) { return arr + N; }
 
 LoopParallelize::LoopParallelize() : LoopPass(ID) {}
 
-bool LoopParallelize::isOnLoop(Instruction *inst, Loop *L) {
+bool LoopParallelize::isOnLoop(Instruction *inst) {
   for (Loop::block_iterator it = L->block_begin(); it != L->block_end(); ++it) {
     if (inst->getParent() == *it)
       return true;
@@ -25,7 +25,7 @@ bool LoopParallelize::isOnLoop(Instruction *inst, Loop *L) {
   return false;
 }
 
-bool LoopParallelize::isOnLoop(BasicBlock *bb, Loop *L) {
+bool LoopParallelize::isOnLoop(BasicBlock *bb) {
   for (Loop::block_iterator it = L->block_begin(); it != L->block_end(); ++it) {
     if (bb == *it)
       return true;
@@ -34,8 +34,7 @@ bool LoopParallelize::isOnLoop(BasicBlock *bb, Loop *L) {
 }
 
 // Evaluate if instruction is in any of the body blocks
-bool LoopParallelize::isOnLoopBody(Instruction *inst,
-                                   std::vector<BasicBlock *> bodyBlocks) {
+bool LoopParallelize::isOnLoopBody(Instruction *inst) {
   for (std::vector<BasicBlock *>::iterator it = bodyBlocks.begin();
        it != bodyBlocks.end(); ++it) {
     if (inst->getParent() == *it)
@@ -54,7 +53,7 @@ void LoopParallelize::recurseRemovefromLPM(Loop *L, LPPassManager &LPM) {
 }
 
 // Adapted from LoopDeletion pass
-void LoopParallelize::deleteLoop(Loop *L, LPPassManager &LPM) {
+void LoopParallelize::deleteLoop(LPPassManager &LPM) {
   // Remove subloops from queue, since they have been moved to cloned function
   std::vector<Loop *> subLoops = L->getSubLoops();
   for (std::vector<Loop *>::iterator sl = subLoops.begin();
@@ -89,7 +88,6 @@ void LoopParallelize::deleteLoop(Loop *L, LPPassManager &LPM) {
   BasicBlock::iterator BI = exitBlock->begin();
   while (PHINode *P = dyn_cast<PHINode>(BI)) {
     int j = P->getBasicBlockIndex(exitingBlock);
-    assert(j >= 0 && "Can't find exiting block in exit block's phi node!");
     P->setIncomingBlock(j, preheader);
     for (unsigned i = 1; i < exitingBlocks.size(); ++i)
       P->removeIncomingValue(exitingBlocks[i]);
@@ -126,12 +124,12 @@ void LoopParallelize::deleteLoop(Loop *L, LPPassManager &LPM) {
 
 // Search the loop and update values of the lower and upper bounds of the loop
 // to be passed to .omp_outlined.
-bool LoopParallelize::getLowerAndUpperBounds(Loop *L, Value *&lower,
-                                             Value *&upper, bool &willInvert) {
+bool LoopParallelize::getLowerAndUpperBounds() {
   BasicBlock *header = L->getHeader();
   CmpInst *compInst = dyn_cast<CmpInst>(header->getTerminator()->getOperand(0));
-  willInvert = false;
   if (compInst && compInst->isIntPredicate()) {
+    this->willInvert = false;
+    this->isUnsigned = compInst->isUnsigned();
     unsigned int predicate = compInst->getPredicate();
     switch (predicate) {
     default: {
@@ -141,19 +139,19 @@ bool LoopParallelize::getLowerAndUpperBounds(Loop *L, Value *&lower,
     case CmpInst::ICMP_UGE:
     case CmpInst::ICMP_SGE:
     case CmpInst::ICMP_SGT: {
-      lower = compInst->getOperand(1);
-      upper = compInst->getOperand(0);
+      this->lower = compInst->getOperand(1);
+      this->upper = compInst->getOperand(0);
       // A > comparison indicates the loop counter must be altered in case it
       // is needed inside the loop on the acc_cloned function
-      willInvert = true;
+      this->willInvert = true;
       return true;
     }
     case CmpInst::ICMP_ULT:
     case CmpInst::ICMP_ULE:
     case CmpInst::ICMP_SLT:
     case CmpInst::ICMP_SLE: {
-      lower = compInst->getOperand(0);
-      upper = compInst->getOperand(1);
+      this->lower = compInst->getOperand(0);
+      this->upper = compInst->getOperand(1);
       return true;
     }
     }
@@ -174,19 +172,17 @@ Value *LoopParallelize::getPointerValue(Value *possibleLoad) {
 }
 
 // Find the instructions that increment the loop
-bool LoopParallelize::getIncrement(
-    Loop *L, bool isForLike,
-    SmallVector<Instruction *, 3> &incrementInstructions) {
+bool LoopParallelize::getIncrement() {
   BasicBlock *header = L->getHeader();
   Instruction *incInst;
   // Assume the first instruction of the header loads the counter
-  Value *counterPtr = cast<LoadInst>(header->front()).getPointerOperand();
+  counterPtr = cast<LoadInst>(header->front()).getPointerOperand();
   // Find a use of it OUTSIDE the loop header (but inside the loop). This should
   // lead to the increment instruction
   for (Value::use_iterator it = counterPtr->use_begin();
        it != counterPtr->use_end(); ++it) {
     Value *use = *it;
-    Instruction *useOfInst = dyn_cast<StoreInst>(use);
+    StoreInst *useOfInst = dyn_cast<StoreInst>(use);
     // Not a store, or does not store the counter
     if (!useOfInst || useOfInst->getOperand(1) != counterPtr)
       continue;
@@ -195,12 +191,12 @@ bool LoopParallelize::getIncrement(
       continue;
     // The instruction is on the header, or not on the loop at all
     if (!isForLike &&
-        (useOfInst->getParent() == header || !isOnLoop(useOfInst, L)))
+        (useOfInst->getParent() == header || !isOnLoop(useOfInst)))
       continue;
     // It is a valid store, now lets check if it stores an add or sub
     // instruction
     Instruction *possibleIncOp =
-        dyn_cast<Instruction>(useOfInst->getOperand(0));
+        dyn_cast<Instruction>(useOfInst->getValueOperand());
     if (possibleIncOp) {
       unsigned int opcode = possibleIncOp->getOpcode();
       if (opcode == Instruction::Add || opcode == Instruction::Sub) {
@@ -215,27 +211,22 @@ bool LoopParallelize::getIncrement(
         }
         incrementInstructions.push_back(incInst);
         incrementInstructions.push_back(useOfInst);
-        // Add the load pointer instruction
         return true;
-        break;
       }
     }
   }
   return false;
 }
 
-// Search every load and getelementptr inside the loop block. If the pointer
-// operand is not inside the loop and is also not the counterPtr, store it.
-void LoopParallelize::searchBodyPointers(BasicBlock *bodyBlock,
-                                         std::set<Value *> &bodyPointers,
-                                         std::vector<BasicBlock *> bodyBlocks,
-                                         Loop *L) {
+// Search every load and getelementptr inside the loop block in search of
+// out-of-loop value uses. If the operand is not inside the loop and is
+// also not the counterPtr, store it.
+void LoopParallelize::searchBodyPointers(BasicBlock *bodyBlock) {
   BasicBlock *header = L->getHeader();
-  Value *counterPtr = cast<LoadInst>(header->front()).getPointerOperand();
   for (BasicBlock::iterator bit = bodyBlock->begin(); bit != bodyBlock->end();
        ++bit) {
     Instruction *inst = &(*bit);
-    // Test load or getelpointers instructions
+    // Load and getelementptr instructions are treated differently
     if (inst->getOpcode() == Instruction::GetElementPtr ||
         inst->getOpcode() == Instruction::Load) {
       Value *pValue = getPointerValue(inst);
@@ -246,17 +237,21 @@ void LoopParallelize::searchBodyPointers(BasicBlock *bodyBlock,
         continue;
       Instruction *pointerInst = dyn_cast<Instruction>(pValue);
       // If it is an instruction defined inside the loop, skip it
-      if (pointerInst && isOnLoop(pointerInst, L))
+      if (pointerInst && isOnLoop(pointerInst))
         continue;
       // Otherwise, store it to use as an argument on omp_outlined clone
       bodyPointers.insert(pValue);
-    } else if (inst->getOpcode() == Instruction::Call) {
-      // Iterate through call arguments in search of a pointer
+    } else {
+      // Iterate through instruction operands in search of a pointer
       for (User::op_iterator opit = inst->op_begin(); opit != inst->op_end();
            ++opit) {
-        // Stores allocas to be passed as argument
-        if (isa<AllocaInst>(*opit))
-          bodyPointers.insert(*opit);
+        Instruction *fromOp = dyn_cast<Instruction>(*opit);
+        // If pointer was created inside the loop, leave it
+        if (!fromOp || isOnLoop(fromOp))
+          continue;
+        // Stores pointer instructions to be passed as argument
+        if (fromOp->getType()->isPointerTy())
+          bodyPointers.insert(fromOp);
       }
     }
   }
@@ -311,10 +306,30 @@ Function *LoopParallelize::createFunction(Function *ompFunc,
   return newFunc;
 }
 
+// Obtain plower, upperv and incr from accept_cloned function
+void getFunctionPointers(Function *accept_cloned, Value *&plower,
+                         Value *&upperv, Value *&incr) {
+  // Find plower in clonedF
+  BasicBlock *clonedEntry = &accept_cloned->getEntryBlock();
+  for (BasicBlock::iterator it = clonedEntry->begin(); it != clonedEntry->end();
+       ++it) {
+    if (it->getName() == "plower") {
+      plower = &*it;
+      break;
+    }
+  }
+  // Get upperv and incr
+  Function::arg_iterator argit = accept_cloned->arg_begin();
+  std::advance(argit, 3);
+  upperv = argit;
+  std::advance(argit, 1);
+  incr = argit;
+}
+
 // Replace counterPtr with:
 // If loop decrements: upperv - (plower*incr)
 // If loop increments: plower*incr
-Value *LoopParallelize::replaceCounter(Value *plower, Value *upperv, Value *incr,
+Value *replaceCounter(Value *plower, Value *upperv, Value *incr,
                       bool isUnsigned, bool willInvert, IRBuilder<> &builder) {
   Value *toRet;
   Value *loadplower = builder.CreateLoad(plower);
@@ -331,10 +346,104 @@ Value *LoopParallelize::replaceCounter(Value *plower, Value *upperv, Value *incr
   return toRet;
 }
 
+// Iterate through accept_counter blocks and replace uses of counterPtr
+void replaceCounterPtr(Value *counterPtr, Function *accept_cloned,
+                       std::vector<BasicBlock *> bodyBlocks, bool isUnsigned,
+                       bool willInvert) {
+  Value *allocatedNewPointer = NULL;
+  std::set<Instruction *> replaceUsesLoad;
+  std::set<Instruction *> replaceUsesOther;
+  Value *plower, *upperv, *incr;
+
+  IRBuilder<> builder(accept_cloned->getContext());
+
+  getFunctionPointers(accept_cloned, plower, upperv, incr);
+  for (std::vector<BasicBlock *>::iterator bit = bodyBlocks.begin();
+       bit != bodyBlocks.end(); ++bit) {
+    Instruction *firstLoad = NULL;
+    Instruction *firstNoLoad = NULL;
+    replaceUsesLoad.clear();
+    replaceUsesOther.clear();
+
+    // Run through the block in search of uses of counterPtr
+    for (BasicBlock::iterator I = (*bit)->begin(); I != (*bit)->end(); ++I) {
+      Instruction::op_iterator opit =
+          std::find(I->op_begin(), I->op_end(), counterPtr);
+      // Skip instructions that don't use counterPtr
+      if (opit == I->op_end())
+        continue;
+      Value *iOper = *opit;
+      // Load instructions are special, treat them differently
+      if (isa<LoadInst>(I)) {
+        if (!firstLoad)
+          firstLoad = I;
+        replaceUsesLoad.insert(I);
+      } else {
+        if (!firstNoLoad)
+          firstNoLoad = I;
+        replaceUsesOther.insert(I);
+      }
+    }
+    // Replace load(counterPtr) with load(plower)
+    if (firstLoad) {
+      Value *replaceValue;
+      builder.SetInsertPoint(firstLoad);
+      // Create the arithmetic conversion from plower to the desired value
+      replaceValue =
+          replaceCounter(plower, upperv, incr, isUnsigned, willInvert, builder);
+      // Replace uses of oldLoad with newLoad. Erase oldLoad from the BB
+      for (std::set<Instruction *>::iterator it = replaceUsesLoad.begin();
+           it != replaceUsesLoad.end(); ++it) {
+        Instruction *willRep = *it;
+        // Special case (original is of a different type from the comparison)
+        // Thus, we replace its extended (or truncated ) value
+        if (willRep->getType() != replaceValue->getType()) {
+          Value *firstUse = *willRep->use_begin();
+          // Check if the load is casted
+          if (isa<CastInst>(firstUse)) {
+            willRep = cast<Instruction>(firstUse);
+          }
+          // We must cast replaceValue manually to fit willReps type
+          else {
+            builder.SetInsertPoint(cast<Instruction>(firstUse));
+            IntegerType *toAttain = cast<IntegerType>(willRep->getType());
+            if (isUnsigned)
+              replaceValue = builder.CreateSExtOrTrunc(replaceValue, toAttain);
+            else
+              replaceValue = builder.CreateZExtOrTrunc(replaceValue, toAttain);
+          }
+        }
+        willRep->replaceAllUsesWith(replaceValue);
+        willRep->eraseFromParent();
+      }
+    }
+    if (firstNoLoad) {
+      // For other uses, we must replace the pointer itself. Allocate a new
+      // pointer if this was not done yet
+      if (!allocatedNewPointer) {
+        builder.SetInsertPoint(accept_cloned->getEntryBlock().begin());
+        allocatedNewPointer = builder.CreateAlloca(
+            counterPtr->getType()->getPointerElementType(), NULL, "replacePtr");
+      }
+      for (std::set<Instruction *>::iterator it = replaceUsesOther.begin();
+           it != replaceUsesOther.end(); ++it) {
+        Instruction *willRep = *it;
+        builder.SetInsertPoint(willRep);
+        Value *replaceValue = replaceCounter(plower, upperv, incr, isUnsigned,
+                                             willInvert, builder);
+        // Store operations on new pointer
+        builder.CreateStore(replaceValue, allocatedNewPointer);
+        willRep->replaceUsesOfWith(counterPtr, allocatedNewPointer);
+      }
+    }
+  }
+}
+
 bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
   // Don't search skippable functions
   if (transformPass->shouldSkipFunc(*(L->getHeader()->getParent())))
     return false;
+  this->L = L;
   Instruction *loopStart = L->getHeader()->begin();
   std::stringstream ss;
   ss << "ploop to paralellize at "
@@ -394,10 +503,7 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
   }
 
   // Lets find the upper and lower bounds of the loop
-  Value *lower, *upper;
-  bool willInvert;
-
-  if (!getLowerAndUpperBounds(L, lower, upper, willInvert)) {
+  if (!getLowerAndUpperBounds()) {
     ACCEPT_LOG << "Loop does not present a valid increment comparison!\n";
     return false;
   }
@@ -413,7 +519,6 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
     upper = tryLoad;
 
   // Check if loop originated from for or while
-  bool isForLike;
   StringRef headerName = loopHeader->getName();
   if (headerName.startswith("for.cond")) {
     ACCEPT_LOG << "for-like loop\n";
@@ -427,8 +532,8 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
   }
 
   // Now, lets find the increment of the loop
-  SmallVector<Instruction *, 3> incrementInstructions;
-  bool foundIncrement = getIncrement(L, isForLike, incrementInstructions);
+  incrementInstructions.clear();
+  bool foundIncrement = getIncrement();
   Instruction *incInst = *(incrementInstructions.begin() + 1);
   if (!foundIncrement) {
     ACCEPT_LOG << "No valid increment operation (sum or subtraction) found "
@@ -436,11 +541,11 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
     return false;
   }
 
-  Value *increment = incInst->getOperand(1);
+  increment = incInst->getOperand(1);
   // Check if fixed value (Constant)
   if (Instruction *possibleInst = dyn_cast<Instruction>(increment)) {
     increment = getPointerValue(possibleInst);
-    if (isOnLoop(cast<Instruction>(increment), L)) {
+    if (isOnLoop(cast<Instruction>(increment))) {
       ACCEPT_LOG
           << "the increment is defined inside the loop, cannot parallelize\n";
       return false;
@@ -448,7 +553,7 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
   }
 
   // Get the body blocks of the loop
-  std::vector<BasicBlock *> bodyBlocks;
+  bodyBlocks.clear();
   for (Loop::block_iterator bit = L->block_begin(); bit != L->block_end();
        ++bit) {
     BasicBlock *currentB = *bit;
@@ -459,16 +564,32 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
     bodyBlocks.push_back(currentB);
   }
 
+  if (bodyBlocks.empty()) {
+    ACCEPT_LOG << "empty body\n";
+    return false;
+  }
+
+  // Check for control flow in the loop body. We don't perforate anything
+  // with a break, continue, return, etc.
+  for (std::vector<BasicBlock *>::iterator i = bodyBlocks.begin();
+       i != bodyBlocks.end(); ++i) {
+    if (L->isLoopExiting(*i)) {
+      ACCEPT_LOG << "contains loop exit\n";
+      ACCEPT_LOG << "cannot perforate loop\n";
+      return false;
+    }
+  }
+
   // Check whether the body of this loop is elidable (precise-pure).
   std::set<BasicBlock *> bodyBlocksSet(bodyBlocks.begin(), bodyBlocks.end());
   std::set<Instruction *> blockers = AI->preciseEscapeCheck(bodyBlocksSet);
 
   // Search all body blocks for pointers created outside the loop. They must
   // be passed as arguments on __kmpc_fork_call
-  std::set<Value *> bodyPointers;
+  bodyPointers.clear();
   for (std::vector<BasicBlock *>::iterator it = bodyBlocks.begin();
        it != bodyBlocks.end(); ++it) {
-    searchBodyPointers(*it, bodyPointers, bodyBlocks, L);
+    searchBodyPointers(*it);
   }
 
   // Parallelize loop
@@ -476,10 +597,7 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
     int param = transformPass->relaxConfig[loopName];
     if (param) {
       ACCEPT_LOG << "paralellizing with factor 2^" << param << "\n";
-      viableLoop VL(L, lower, upper, increment, willInvert, isForLike,
-                    incrementInstructions, bodyBlocks, bodyPointers);
-
-      return paralellizeLoop(VL, LPM, param);
+      return paralellizeLoop(LPM, param);
     } else {
       ACCEPT_LOG << "not paralellizing\n";
       return false;
@@ -503,9 +621,7 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
 
 // Parallelization begins here. Return true if modified code (even if
 // parallelization was not sucessfull)
-bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
-                                      int logthreads) {
-  Loop *L = VL.L;
+bool LoopParallelize::paralellizeLoop(LPPassManager &LPM, int logthreads) {
   BasicBlock *loopHeader = L->getHeader();
   BasicBlock *preHeader = L->getLoopPreheader();
   LoopInfo *LI = &getAnalysis<LoopInfo>();
@@ -525,9 +641,6 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
     return false;
   }
 
-  Value *lower = VL.lower;
-  Value *upper = VL.upper;
-  Value *increment = VL.increment;
   // Use CmpInst to evaluate the type of the increment operations
   TerminatorInst *headerTerm = loopHeader->getTerminator();
   CmpInst *compInst = dyn_cast<CmpInst>(headerTerm->getOperand(0));
@@ -563,59 +676,30 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
     return false;
   }
 
-  // If this is a while loop, the increment is in he body. Remove it before
+  // If this is a while loop, the increment is in the body. Remove it before
   // inserting the BBs on the cloned function
-  bool isForLike = VL.isForLike;
   if (!isForLike) {
     for (SmallVector<Instruction *, 3>::iterator it =
-             VL.incrementInstructions.end() - 1;
-         it >= VL.incrementInstructions.begin(); --it) {
+             incrementInstructions.end() - 1;
+         it >= incrementInstructions.begin(); --it) {
       Instruction *toDel = *it;
       toDel->dropAllReferences();
       toDel->eraseFromParent();
     }
   }
 
-  std::set<Value *> bodyPointers = VL.bodyPointers;
   // Clone the omp.untlined function
-  llvm::ValueToValueMapTy valueM;
+  ValueToValueMapTy valueM;
   SmallVector<ReturnInst *, 1> returns;
   // Create a function blank in which toClone will be inserted into
   Function *clonedF = createFunction(toClone, bodyPointers, valueM);
-  llvm::CloneFunctionInto(clonedF, toClone, valueM, false, returns);
+  CloneFunctionInto(clonedF, toClone, valueM, false, returns);
   Function::iterator beforeAddition = clonedF->begin();
-  // This is the lower_or_eq BB
-  std::advance(beforeAddition, 5);
+  // This is the lowerexec BB
+  std::advance(beforeAddition, 4);
+  // This is the after_lower BB
   Function::iterator afterAddition = beforeAddition;
   afterAddition++;
-
-  std::vector<BasicBlock *> bodyBlocks = VL.bodyBlocks;
-  // Find the first and last basicblocks of the body
-
-  // beginBody is the basic block that comes after the header
-  // Ideally, this is the first BasicBlock when iterating on bodyBlocks, but we
-  // must be safe if this is not the case
-  BasicBlock *beginBody;
-  if (isOnLoop(cast<BasicBlock>(headerTerm->getOperand(1)), L)) {
-    beginBody = cast<BasicBlock>(headerTerm->getOperand(1));
-  } else {
-    beginBody = cast<BasicBlock>(headerTerm->getOperand(2));
-  }
-  // If this is a while-like loop, endBody is the latch. Otherwise, it is the
-  // predecessor from the latch the loop
-  BasicBlock *endBody;
-  if (!isForLike) {
-    endBody = L->getLoopLatch();
-  } else {
-    BasicBlock *exitB = L->getLoopLatch();
-    // Iterate trhought latch predecessors to find the first one inside the loop
-    for (pred_iterator PI = pred_begin(exitB); PI != pred_end(exitB); ++PI) {
-      if (isOnLoop(*PI, L)) {
-        endBody = *PI;
-        break;
-      }
-    }
-  }
 
   // Deal with debug calls and metadata
   std::vector<Instruction *> dbgToDel;
@@ -625,8 +709,10 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
     for (BasicBlock::iterator ii = b->begin(); ii != b->end(); ++ii) {
       // Remove llvm.dbg.* calls to avoid metadata errors on cloned function
       CallInst *callFunc = dyn_cast<CallInst>(ii);
-      if (callFunc &&
-          callFunc->getCalledFunction()->getName().startswith("llvm.dbg")) {
+      if (callFunc) {
+        if (!callFunc->getCalledFunction() ||
+            !callFunc->getCalledFunction()->getName().startswith("llvm.dbg"))
+          continue;
         dbgToDel.push_back(callFunc);
       }
       // Remove debug data from moved instructions to avoid module check
@@ -638,6 +724,51 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
   for (std::vector<Instruction *>::iterator it = dbgToDel.begin();
        it != dbgToDel.end(); ++it) {
     (*it)->eraseFromParent();
+  }
+
+  // Find the first and last basicblocks of the body
+
+  // beginBody is the basic block that comes after the header
+  // Ideally, this is the first BasicBlock when iterating on bodyBlocks, but we
+  // must be safe if this is not the case
+  BasicBlock *beginBody;
+  if (isOnLoop(cast<BasicBlock>(headerTerm->getOperand(1)))) {
+    beginBody = cast<BasicBlock>(headerTerm->getOperand(1));
+  } else {
+    beginBody = cast<BasicBlock>(headerTerm->getOperand(2));
+  }
+
+  // If this is a while-like loop, endBody is the latch. Otherwise, it is the
+  // predecessor from the latch the loop
+  BasicBlock *endBody;
+  if (!isForLike) {
+    endBody = L->getLoopLatch();
+  } else {
+    BasicBlock *exitB = L->getLoopLatch();
+    // Iterate trhought latch predecessors to find the first one inside the loop
+    for (pred_iterator PI = pred_begin(exitB); PI != pred_end(exitB); ++PI) {
+      if (isOnLoop(*PI)) {
+        endBody = *PI;
+        break;
+      }
+    }
+  }
+
+  // Avoid the header branching to the loop body, that will be sent to the
+  // cloned function
+  BasicBlock *afterBody;
+  if (isForLike)
+    afterBody = L->getLoopLatch();
+  else
+    afterBody = L->getExitBlock();
+
+  // Create a new jump instruction if toJump is already a sucessor of the header
+  if (std::find(headerTerm->op_begin(), headerTerm->op_end(), afterBody) !=
+      headerTerm->op_end()) {
+    BranchInst *toExitB = BranchInst::Create(afterBody);
+    ReplaceInstWithInst(headerTerm, toExitB);
+  } else {
+    headerTerm->replaceUsesOfWith(beginBody, afterBody);
   }
 
   // Move the blocks from the original loop to the new function. Remove all
@@ -655,109 +786,39 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
       lastMoved = bb;
     }
   }
-  LI->removeBlock(endBody);
-  endBody->moveAfter(lastMoved);
+  // On a loop with one body-block, skip this
+  if (endBody != beginBody) {
+    LI->removeBlock(endBody);
+    endBody->moveAfter(lastMoved);
+  }
 
   BranchInst *newJump;
-  // Replace the branch from the BB before the replaceable to the first
-  // bodyBlock
-  newJump = BranchInst::Create(beginBody);
-  llvm::ReplaceInstWithInst(beforeAddition->getTerminator(), newJump);
+  // Adjust the label to jump to from the block before beginBody
+  beforeAddition->getTerminator()->replaceUsesOfWith(afterAddition, beginBody);
   // Replace the branch from the final bodyBlock to the cloned function
   newJump = BranchInst::Create(afterAddition);
-  llvm::ReplaceInstWithInst(endBody->getTerminator(), newJump);
+  ReplaceInstWithInst(endBody->getTerminator(), newJump);
 
-  // Avoid the header branching to the loop body, that is now on the cloned
-  // function
-  BasicBlock *toJump;
-  if (isForLike)
-    toJump = L->getLoopLatch();
-  else
-    toJump = L->getExitBlock();
-  headerTerm->replaceUsesOfWith(beginBody, toJump);
+  // Search all bodyBlocks for jumps not in clonedF
+  for (std::vector<BasicBlock *>::iterator bit = bodyBlocks.begin();
+       bit != bodyBlocks.end(); ++bit) {
+    TerminatorInst *term = (*bit)->getTerminator();
+    // Replace possible jumps to original function into equivalents on new
+    // function
+    term->replaceUsesOfWith(loopHeader, beforeAddition);
+    term->replaceUsesOfWith(afterBody, afterAddition);
+  }
 
   IRBuilder<> builder(module->getContext());
 
-  // Find plower in clonedF
-  BasicBlock *clonedEntry = &clonedF->getEntryBlock();
-  Instruction *plower;
-  for (BasicBlock::iterator it = clonedEntry->begin(); it != clonedEntry->end();
-       ++it) {
-    if (it->getName() == "plower") {
-      plower = &*it;
-      break;
-    }
-  }
-  // Get upperv and incr
-  Function::arg_iterator argit = clonedF->arg_begin();
-  std::advance(argit, 3);
-  Value *upperv = argit;
-  std::advance(argit, 1);
-  Value *incr = argit;
-
+  // Replace uses of counterPtr inside clonedF with some modification of plower
   Value *counterPtr = cast<LoadInst>(loopHeader->front()).getPointerOperand();
-  Instruction *lastLoad = NULL;
-  Value *lastOtherUse = NULL;
-  std::set<Instruction *> replaceUsesLoad;
-  std::set<Instruction *> replaceUsesOtherV;
-  // Iterate throught the uses of counterPtr to find any that are now in
-  // clonedF. Replace them with the proper value
-  for (Value::use_iterator uit = counterPtr->use_begin();
-       uit != counterPtr->use_end(); ++uit) {
-    Instruction *useOfCtr = dyn_cast<Instruction>(*uit);
-    if (useOfCtr && useOfCtr->getParent()->getParent() == clonedF) {
-      // If the use is a load, replace it with plower
-      if (isa<LoadInst>(useOfCtr)) {
-        lastLoad = useOfCtr;
-        // Add to a set that will be iterated after the loop
-        replaceUsesLoad.insert(useOfCtr);
-      }
-      // Else, create a new pointer to replace it
-      else {
-        lastOtherUse = useOfCtr;
-        replaceUsesOtherV.insert(useOfCtr);
-      }
-    }
-  }
-
-  if (lastLoad) {
-    Value *replaceValue;
-    // Create the replacement value for counterPtr on its earliest use
-    builder.SetInsertPoint(lastLoad);
-    Value *loadplower = builder.CreateLoad(plower);
-    replaceValue = replaceCounter(plower, upperv, incr, compInst->isUnsigned(),
-                                  VL.willInvert, builder);
-    for (std::set<Instruction *>::iterator it = replaceUsesLoad.begin();
-         it != replaceUsesLoad.end(); ++it) {
-      Instruction *willRep = *it;
-      // Replace the load with the current increment and remove it
-      willRep->replaceAllUsesWith(replaceValue);
-      willRep->eraseFromParent();
-    }
-  }
-  if (lastOtherUse) {
-    // Allocate a new pointer
-    builder.SetInsertPoint(clonedF->getEntryBlock().begin());
-    Value *replacePtr = builder.CreateAlloca(
-        counterPtr->getType()->getPointerElementType(), NULL, "replacePtr");
-    // Replace each use of the new pointer with the same combo from loads, but
-    // in pointer form
-    for (std::set<Instruction *>::iterator it = replaceUsesOtherV.begin();
-         it != replaceUsesOtherV.end(); ++it) {
-      Instruction *willRep = *it;
-      builder.SetInsertPoint(willRep);
-      Value *replaceValue = replaceCounter(
-          plower, upperv, incr, compInst->isUnsigned(), VL.willInvert, builder);
-      // Store operations on new pointer
-      builder.CreateStore(replaceValue, replacePtr);
-      // Replace use of CounterPtr with our modified pointer
-      willRep->replaceUsesOfWith(counterPtr, replacePtr);
-    }
-  }
+  replaceCounterPtr(counterPtr, clonedF, bodyBlocks, compInst->isUnsigned(),
+                    willInvert);
 
   // For each use of bodyPointers[i] that is now on the acc_cloned function,
   // replace its uses with the corresponding function argument
-  argit = clonedF->arg_begin();
+  Function::arg_iterator argit = clonedF->arg_begin();
   std::advance(argit, toClone->arg_size());
   std::set<Instruction *> replaceUses;
   for (std::set<Value *>::iterator it = bodyPointers.begin();
@@ -797,7 +858,7 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
   // We must allocate a new pointer to store the increment, which will be
   // manipulated
   builder.SetInsertPoint(loopHeader->getParent()->getEntryBlock().begin());
-  Type *incrTy = incr->getType();
+  Type *incrTy = increment->getType();
   if (incrTy->isPointerTy())
     incrTy = incrTy->getPointerElementType();
   Value *pincr = builder.CreateAlloca(incrTy, 0, "pincr");
@@ -816,8 +877,7 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
         CmpInst::Create(Instruction::ICmp, CmpInst::ICMP_SLE, incrV, zero,
                         "negCmp", preHeader->getTerminator());
     // Create a new block where the value of the increment is inverted
-    TerminatorInst *newBlockTerm =
-        llvm::SplitBlockAndInsertIfThen(negCmp, false);
+    TerminatorInst *newBlockTerm = SplitBlockAndInsertIfThen(negCmp, false);
     // If the preheader is inside a loop, ensure the new blocks are inserted
     // into it
     Loop *parentLoop = L->getParentLoop();
@@ -841,7 +901,7 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
   // Ensure incr type matches lower and upper (comparison type)
   unsigned long incrBitmask = cast<IntegerType>(incrTy)->getBitMask();
   if (incrBitmask != bitmask) {
-    if (compInst->isUnsigned()) {
+    if (isUnsigned) {
       incrV = builder.CreateZExtOrTrunc(incrV, cast<IntegerType>(lowerTy));
     } else {
       incrV = builder.CreateSExtOrTrunc(incrV, cast<IntegerType>(lowerTy));
@@ -876,7 +936,7 @@ bool LoopParallelize::paralellizeLoop(viableLoop VL, LPPassManager &LPM,
   // Create the call to __kmpc_fork_call
   builder.CreateCall(kmpcFC, realArgs);
   // Remove what remains of the original loop
-  deleteLoop(L, LPM);
+  deleteLoop(LPM);
   return true;
 }
 
