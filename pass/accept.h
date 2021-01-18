@@ -8,6 +8,8 @@
 #include "llvm/DebugInfo.h"
 #include "llvm/Analysis/ProfileInfo.h"
 #include "llvm/Analysis/LoopPass.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
+#include "llvm/IRBuilder.h"
 
 #include <set>
 #include <map>
@@ -28,6 +30,7 @@ namespace llvm {
   void initializeAcceptAAPass(PassRegistry &Registry);
   FunctionPass *createAcceptTransformPass();
   extern FunctionPass *sharedAcceptTransformPass;
+  LoopPass *createLoopParallelizePass();
   LoopPass *createLoopPerfPass();
   void initializeLoopNPUPass(PassRegistry &Registry);
   LoopPass *createLoopNPUPass();
@@ -197,6 +200,55 @@ struct ACCEPTPass : public llvm::FunctionPass {
   llvm::Instruction *findApproxCritSec(llvm::Instruction *acq,
       LogDescription *desc);
   bool nullifyApprox(llvm::Function &F);
+};
+
+// This class searches loops and stores info on viable ones to apply automatic
+// paralellization
+class LoopParallelize : public llvm::LoopPass {
+public:
+  LoopParallelize();
+private:
+  static char ID;
+  ACCEPTPass *transformPass;
+  ApproxInfo *AI;
+  llvm::Module *module;
+  
+  // Loop-specific info. Replaced in each runOnLoop() call
+  llvm::Loop *L;
+  llvm::Value *lower, *upper, *increment;
+  llvm::Value *counterPtr;
+  bool willInvert, isForLike, isUnsigned;
+  llvm::SmallVector<llvm::Instruction *, 3> incrementInstructions;
+  std::vector<llvm::BasicBlock *> bodyBlocks;
+  std::set<llvm::Value *> bodyPointers;
+
+  void recurseRemovefromLPM(llvm::Loop *L, llvm::LPPassManager &LPM);
+  void deleteLoop(llvm::LPPassManager &LPM);
+
+  bool isOnLoop(llvm::Instruction *inst);
+  bool isOnLoop(llvm::BasicBlock *bb);
+  bool isOnLoopBody(llvm::Instruction *inst);
+  bool getLowerAndUpperBounds();
+  llvm::Value *getPointerValue(llvm::Value *possibleLoad);
+  bool getIncrement();
+
+  void searchBodyPointers(llvm::BasicBlock *bodyBlock);
+
+  llvm::Function *createFunction(llvm::Function *ompFunc,
+                                 const std::set<llvm::Value *> &allocaToArgs,
+                                 llvm::ValueToValueMapTy &valueM);
+  llvm::Value *ensureLoad(llvm::Value *pointer, llvm::IRBuilder<> &builder);
+
+  llvm::Value *replaceCounter(llvm::Value *plower, llvm::Value *upperv,
+                              llvm::Value *incr, llvm::IRBuilder<> &builder);
+
+  bool paralellizeLoop(llvm::LPPassManager &LPM, int logthreads);
+
+  virtual bool doInitialization(llvm::Loop *, llvm::LPPassManager &);
+  virtual bool doFinalization();
+  virtual bool runOnLoop(llvm::Loop *L, llvm::LPPassManager &LPM);
+  virtual void getAnalysisUsage(llvm::AnalysisUsage &AU) const;
+  const char *getPassName() const;
 };
 
 // Information about individual instructions is always available.

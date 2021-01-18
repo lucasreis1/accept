@@ -127,7 +127,10 @@ bool FunctionApprox::runOnFunction(Function &F) {
   for (Function::iterator BB = F.begin(); BB != F.end(); ++BB) {
     for (BasicBlock::iterator I = BB->begin(); I != BB->end(); ++I) {
       if (CallInst *CI = dyn_cast<CallInst>(I)) {
-        StringRef functionName = CI->getCalledFunction()->getName();
+        Function *calledF = CI->getCalledFunction();
+        if(!calledF)
+          continue;
+        StringRef functionName = calledF->getName();
         if (functionReplacementList.count(functionName)) {
           toReplace.push_back(CI);
         }
@@ -170,11 +173,16 @@ bool FunctionApprox::tryToOptimizeCall(CallInst *Call) {
     return false;
   }
 
-  // Since these mathematical functions are precise-pure by nature,
-  // all we need is to check if they store to an approx variable
-  // if so, we can approx it
-  Instruction *storeCall = cast<Instruction>(*Call->use_begin());
-  if (!isApprox(storeCall)) {
+  // Ensure the function call is approximate
+  if (!isApprox(Call)) {
+    ACCEPT_LOG << "cannot replace function call\n";
+    for (int i = 0; i < Call->getNumArgOperands(); ++i) {
+      Instruction *arg = dyn_cast<Instruction>(Call->getArgOperand(i));
+      // Register argument blockers
+      if (arg && !isApprox(arg)) {
+        ACCEPT_LOG << "Arg " << i << " not approx\n";
+      }
+    }
     return false;
   }
 

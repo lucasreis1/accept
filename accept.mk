@@ -29,7 +29,10 @@ RTLIB ?= $(RTDIR)/acceptrt.$(ARCH).bc
 FAPPROXLIB ?= $(FAPPROXDIR)/fastapprox.$(ARCH).bc
 EXTRABC += $(RTLIB)
 APPROXBC += $(FAPPROXLIB)
+APPROXBC += $(ACCEPTDIR)/omp.bc
 
+# Required for parallelization
+LIBS += -liomp5
 # Host platform specifics.
 ifeq ($(shell uname -s),Darwin)
 	XCODEINCLUDES = $(shell xcrun --show-sdk-path)/usr/include
@@ -57,7 +60,6 @@ PASSLIB ?= $(BUILTDIR)/lib/enerc.$(LIBEXT)
 override CFLAGS += -I$(INCLUDEDIR) -g -fno-use-cxa-atexit
 override CXXFLAGS += $(CFLAGS)
 LLCARGS += -O2
-LIBS += -lm
 
 # Compiler flags to pass to Clang to add the ACCEPT machinery.
 ENERCFLAGS :=  -Xclang -load -Xclang $(ENERCLIB) \
