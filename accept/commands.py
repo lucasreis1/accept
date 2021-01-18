@@ -8,6 +8,7 @@ import os
 import subprocess
 import json
 import traceback
+from .uncertain import umean
 from collections import namedtuple
 from . import core
 from . import cwmemo
@@ -89,6 +90,8 @@ def dump_result_human(res, verbose):
         yield '{} % error'.format(res.error * 100)
     if hasattr(res, 'speedup'):
         yield '{} speedup'.format(res.speedup)
+    if hasattr(res, 'duration'):
+        yield '{} s duration'.format(res.duration)
     if verbose and hasattr(res, 'outputs'):
         output = res.outputs[0]
         if isinstance(output, basestring):
@@ -316,6 +319,7 @@ def run(ctx, appdir, verbose, test):
         if test:
             results = exp.test_results(results)
 
+    print('base_time={} s'.format(umean(exp.ptimes)))
     pout = exp.test_pout if test else exp.pout
     output = dump_results_human(results, pout, verbose)
     for line in output:
