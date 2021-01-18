@@ -122,8 +122,8 @@ void LoopParallelize::deleteLoop(LPPassManager &LPM) {
   LPM.deleteLoopFromQueue(L);
 }
 
-// Search the loop and update values of the lower and upper bounds of the loop
-// to be passed to .omp_outlined.
+// Search the loop and update values of the lower and upper bounds to be passed
+// to .omp_outlined.
 bool LoopParallelize::getLowerAndUpperBounds() {
   BasicBlock *header = L->getHeader();
   CmpInst *compInst = dyn_cast<CmpInst>(header->getTerminator()->getOperand(0));
@@ -175,8 +175,13 @@ Value *LoopParallelize::getPointerValue(Value *possibleLoad) {
 bool LoopParallelize::getIncrement() {
   BasicBlock *header = L->getHeader();
   Instruction *incInst;
-  // Assume the first instruction of the header loads the counter
-  counterPtr = cast<LoadInst>(header->front()).getPointerOperand();
+  // If the loop does not attain the counter from a pointer, the pass will not
+  // work
+  if (!isa<LoadInst>(header->front())) {
+    return false;
+  } else {
+    this->counterPtr = cast<LoadInst>(header->front()).getPointerOperand();
+  }
   // Find a use of it OUTSIDE the loop header (but inside the loop). This should
   // lead to the increment instruction
   for (Value::use_iterator it = counterPtr->use_begin();
@@ -346,7 +351,7 @@ Value *replaceCounter(Value *plower, Value *upperv, Value *incr,
   return toRet;
 }
 
-// Iterate through accept_counter blocks and replace uses of counterPtr
+// Iterate through accept_cloned blocks and replace uses of counterPtr
 void replaceCounterPtr(Value *counterPtr, Function *accept_cloned,
                        std::vector<BasicBlock *> bodyBlocks, bool isUnsigned,
                        bool willInvert) {
@@ -544,7 +549,7 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
   increment = incInst->getOperand(1);
   // Check if fixed value (Constant)
   if (Instruction *possibleInst = dyn_cast<Instruction>(increment)) {
-    increment = getPointerValue(possibleInst);
+
     if (isOnLoop(cast<Instruction>(increment))) {
       ACCEPT_LOG
           << "the increment is defined inside the loop, cannot parallelize\n";
@@ -655,7 +660,7 @@ bool LoopParallelize::paralellizeLoop(LPPassManager &LPM, int logthreads) {
     if (compInst->isUnsigned()) {
       cloneName += "u32";
     } else {
-      cloneName += "u32";
+      cloneName += "s32";
     }
     // int64
   } else if (bitmask == 0xFFFFFFFFFFFFFFFF) {
@@ -738,22 +743,6 @@ bool LoopParallelize::paralellizeLoop(LPPassManager &LPM, int logthreads) {
     beginBody = cast<BasicBlock>(headerTerm->getOperand(2));
   }
 
-  // If this is a while-like loop, endBody is the latch. Otherwise, it is the
-  // predecessor from the latch the loop
-  BasicBlock *endBody;
-  if (!isForLike) {
-    endBody = L->getLoopLatch();
-  } else {
-    BasicBlock *exitB = L->getLoopLatch();
-    // Iterate trhought latch predecessors to find the first one inside the loop
-    for (pred_iterator PI = pred_begin(exitB); PI != pred_end(exitB); ++PI) {
-      if (isOnLoop(*PI)) {
-        endBody = *PI;
-        break;
-      }
-    }
-  }
-
   // Avoid the header branching to the loop body, that will be sent to the
   // cloned function
   BasicBlock *afterBody;
@@ -780,24 +769,16 @@ bool LoopParallelize::paralellizeLoop(LPPassManager &LPM, int logthreads) {
   for (std::vector<BasicBlock *>::iterator it = bodyBlocks.begin();
        it != bodyBlocks.end(); ++it) {
     BasicBlock *bb = *it;
-    if (bb != beginBody && bb != endBody) {
+    if (bb != beginBody) {
       LI->removeBlock(bb);
       bb->moveAfter(lastMoved);
       lastMoved = bb;
     }
   }
-  // On a loop with one body-block, skip this
-  if (endBody != beginBody) {
-    LI->removeBlock(endBody);
-    endBody->moveAfter(lastMoved);
-  }
 
   BranchInst *newJump;
   // Adjust the label to jump to from the block before beginBody
   beforeAddition->getTerminator()->replaceUsesOfWith(afterAddition, beginBody);
-  // Replace the branch from the final bodyBlock to the cloned function
-  newJump = BranchInst::Create(afterAddition);
-  ReplaceInstWithInst(endBody->getTerminator(), newJump);
 
   // Search all bodyBlocks for jumps not in clonedF
   for (std::vector<BasicBlock *>::iterator bit = bodyBlocks.begin();
@@ -812,7 +793,7 @@ bool LoopParallelize::paralellizeLoop(LPPassManager &LPM, int logthreads) {
   IRBuilder<> builder(module->getContext());
 
   // Replace uses of counterPtr inside clonedF with some modification of plower
-  Value *counterPtr = cast<LoadInst>(loopHeader->front()).getPointerOperand();
+  this->counterPtr = cast<LoadInst>(loopHeader->front()).getPointerOperand();
   replaceCounterPtr(counterPtr, clonedF, bodyBlocks, compInst->isUnsigned(),
                     willInvert);
 
