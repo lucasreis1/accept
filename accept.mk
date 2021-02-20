@@ -18,7 +18,7 @@ CXX := $(BUILTDIR)/bin/clang++
 LLVMDIS := $(BUILTDIR)/bin/llvm-dis
 LLVMLINK := $(BUILTDIR)/bin/llvm-link
 LLVMOPT := $(BUILTDIR)/bin/opt
-LLVMLLC := $(BUILTDIR)/bin/llc
+LLVMLLC ?= $(BUILTDIR)/bin/llc # ?= to override wich newer llc to avoid bugs
 LLVMLLI := $(BUILTDIR)/bin/lli
 RTDIR := $(ACCEPTDIR)/rt
 FAPPROXDIR := $(ACCEPTDIR)/fastapprox/fastapprox/src
