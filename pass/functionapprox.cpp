@@ -1,12 +1,15 @@
 #include "llvm/Module.h"
 #include "llvm/IRBuilder.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <sstream>
 
 #include "accept.h"
 
 using namespace llvm;
+
+bool acceptAllFAP;
 
 char const* functionarray [] = {
   "exp", 
@@ -49,7 +52,7 @@ std::string approxVersion(int param) {
 }
 
 // We want to replace both float and double implementations
-// tus, remove the final f
+// thus, remove the final f
 StringRef formatString(StringRef functionName) {
   if (functionName.endswith("f") && functionName != "erf")
     return functionName.drop_back();
@@ -75,6 +78,10 @@ functionOptions resolveOptions(StringRef name) {
 }
 
 namespace {
+  cl::opt<bool, true> optProf("all-fap",
+      cl::desc("ACCEPT: test all function approximation options"),
+      cl::location(acceptAllFAP));
+
   struct FunctionApprox : public FunctionPass {
     static char ID;
     ACCEPTPass *transformPass;
@@ -130,7 +137,7 @@ bool FunctionApprox::runOnFunction(Function &F) {
         Function *calledF = CI->getCalledFunction();
         if(!calledF)
           continue;
-        StringRef functionName = calledF->getName();
+        StringRef functionName = formatString(calledF->getName());
         if (functionReplacementList.count(functionName)) {
           toReplace.push_back(CI);
         }
@@ -172,9 +179,8 @@ bool FunctionApprox::tryToOptimizeCall(CallInst *Call) {
   if (!AI->isPrecisePure(calledFunc)) {
     return false;
   }
-
   // Ensure the function call is approximate
-  if (!isApprox(Call)) {
+  if (!isApprox(Call) && !acceptAllFAP) {
     ACCEPT_LOG << "cannot replace function call\n";
     for (int i = 0; i < Call->getNumArgOperands(); ++i) {
       Instruction *arg = dyn_cast<Instruction>(Call->getArgOperand(i));
@@ -261,14 +267,14 @@ bool FunctionApprox::populateReplacementRequirements(
   ArrayRef<Type *> typeArray(tp);
   Type *returnType = Type::getFloatTy(ctx);
 
-  // the exp2() function is called pow2() in fastapprox
-  if (currentFunction->getName() == "exp2")
-    opString += "pow2";
-  else
-    opString += currentFunction->getName();
 
   bool requiresTwoCalls = false;
-  StringRef functionName = Call->getCalledFunction()->getName();
+  StringRef functionName = formatString(currentFunction->getName());
+  // the exp2() function is called pow2() in fastapprox
+  if (functionName == "exp2")
+    opString += "pow2";
+  else
+    opString += functionName;
 
   builder.SetInsertPoint(Call);
   switch (resolveOptions(functionName)) {
