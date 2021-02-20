@@ -10,9 +10,20 @@
 
 #include "accept.h"
 
+
+namespace llvm {
+  bool acceptAllLPE;
+}
+
 using namespace llvm;
 
 namespace {
+
+cl::opt<bool, true>
+    optProf("all-lpe",
+            cl::desc("ACCEPT: test all loop perforation options"),
+            cl::location(acceptAllLPE));
+
   // Optionally enable "advanced" loop perforation with partial body
   // preservation.
   bool enablePreservation;
@@ -160,7 +171,10 @@ namespace {
       }
 
       // Check whether the body of this loop is elidable (precise-pure).
-      std::set<Instruction*> blockers = AI->preciseEscapeCheck(bodyBlocks);
+      std::set<Instruction*> blockers;
+      if (!acceptAllLPE) {
+        blockers = AI->preciseEscapeCheck(bodyBlocks);
+      }
 
       // Print the blockers to the log.
       for (std::set<Instruction*>::iterator i = blockers.begin();

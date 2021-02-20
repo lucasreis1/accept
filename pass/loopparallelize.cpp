@@ -4,6 +4,7 @@
 #include "llvm/IRBuilder.h"
 #include "llvm/Instructions.h"
 #include "llvm/Module.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -11,9 +12,18 @@
 
 using namespace llvm;
 
+namespace llvm{
+  bool acceptAllLPA;
+}
+
 // Shamelessly stolen from LLVMs source code
 template <typename T, size_t N> T *begin(T (&arr)[N]) { return arr; }
 template <typename T, size_t N> T *end(T (&arr)[N]) { return arr + N; }
+
+cl::opt<bool, true>
+    optProf("all-lpa",
+            cl::desc("ACCEPT: test all loop parallelization options"),
+            cl::location(acceptAllLPA));
 
 LoopParallelize::LoopParallelize() : LoopPass(ID) {}
 
@@ -587,7 +597,10 @@ bool LoopParallelize::runOnLoop(Loop *L, LPPassManager &LPM) {
 
   // Check whether the body of this loop is elidable (precise-pure).
   std::set<BasicBlock *> bodyBlocksSet(bodyBlocks.begin(), bodyBlocks.end());
-  std::set<Instruction *> blockers = AI->preciseEscapeCheck(bodyBlocksSet);
+  std::set<Instruction *> blockers;
+  if (!acceptAllLPA) {
+    blockers = AI->preciseEscapeCheck(bodyBlocksSet);
+  }
 
   // Search all body blocks for pointers created outside the loop. They must
   // be passed as arguments on __kmpc_fork_call
